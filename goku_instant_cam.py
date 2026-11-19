@@ -83,8 +83,13 @@ def instant_transmission(frame, mask, phase, direction):
         y1, y2 = int(ys.min()), int(ys.max())
         dx = int((1.0 if direction < 0 else -1.0) * (1.0 - phase / 0.58) * 13)
         ghost = np.zeros_like(out)
-        shifted = np.roll(frame, dx, axis=1)
-        ghost_mask = np.roll(mask, dx, axis=1)
+        shift_matrix = np.float32([[1, 0, dx], [0, 1, 0]])
+        shifted = cv2.warpAffine(frame, shift_matrix, (w, h),
+                                 flags=cv2.INTER_LINEAR,
+                                 borderMode=cv2.BORDER_CONSTANT)
+        ghost_mask = cv2.warpAffine(mask, shift_matrix, (w, h),
+                                    flags=cv2.INTER_LINEAR,
+                                    borderMode=cv2.BORDER_CONSTANT)
         alpha = (ghost_mask * 0.20 * (1.0 - phase / 0.58))[:, :, None]
         ghost[:] = (shifted.astype(np.float32) * alpha).astype(np.uint8)
         out = cv2.add(out, ghost)
