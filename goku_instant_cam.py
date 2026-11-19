@@ -196,8 +196,7 @@ def main():
                     empty_count = 0
                     empty_frames.clear()
 
-            if background is None:
-                background = np.zeros_like(frame)
+            background_for_output = background if background is not None else np.zeros_like(frame)
 
             gesture = detect_forehead_gesture(hand_result, face_result)
             now = time.time()
@@ -232,7 +231,7 @@ def main():
 
             alpha = (mask * opacity)[:, :, None]
             output = (frame.astype(np.float32) * alpha +
-                      background.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
+                      background_for_output.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
 
             if transition_start is not None:
                 output = draw_aura(output, mask, aura_progress, returning)
