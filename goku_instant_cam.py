@@ -192,7 +192,7 @@ def main():
                     if len(empty_frames) > 8:
                         empty_frames.pop(0)
                     empty_count += 1
-                    if empty_count >= 8 and len(empty_frames) >= 6:
+                    if empty_count >= 18 and len(empty_frames) >= 6:
                         background = np.median(
                             np.stack(empty_frames), axis=0
                         ).astype(np.uint8)
