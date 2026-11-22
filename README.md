@@ -60,10 +60,10 @@ A second, separate two-hand gesture activates a persistent Goku-inspired golden 
 
 1. Keep both hands visible to the webcam.
 2. Bring both wrists/hands together and cross your forearms in front of your head.
-3. Quickly spread both arms outward.
+3. Quickly spread both arms outward until your hands are clearly far apart.
 4. The app toggles the golden aura on. Repeat the same close-then-spread gesture to turn it off.
 
-The aura uses the existing person segmentation mask to add a pulsing golden rim, soft glow, animated energy arcs and small rising sparks. It is a stylized webcam effect, not a full-body anime transformation. The camera needs to see both hands; good lighting and a clear background help recognition.
+The aura uses the existing person segmentation mask to add a pulsing golden rim, soft glow, animated energy arcs and small rising sparks. It is a stylized webcam effect, not a full-body anime transformation. The camera needs to see both hands; good lighting and a clear background help recognition. During the gesture, the preview shows `TRANSFORM HANDS DETECTED` when both hands are being tracked, and `HANDS DETECTED - NOW SPREAD YOUR ARMS!` after the close pose is armed.
 
 ## Controls
 
