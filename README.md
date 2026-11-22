@@ -4,6 +4,16 @@ A lightweight, Python-only Windows webcam effect inspired by Goku's **Instant Tr
 
 The effect is a quick snap, not a fade: a short cool-white/blue flash, a bright subject edge, one directional afterimage, then an abrupt disappearance or reappearance. No circular energy rings, orbiting sparks, or continuous aura.
 
+## Instant Transmission visual effects
+
+The current transition combines four lightweight OpenCV effects:
+- Vertical blue-white energy streak overlays around the subject.
+- Localized wave/noise displacement to make the subject area look spatially warped.
+- Rapid opacity flicker during vanish and reappearance instead of a smooth fade.
+- A short vertical directional blur at the teleport snap.
+
+These are procedural effects and do not require extra AI models or heavy video assets.
+
 ## Windows / low-spec defaults
 
 - Python 3.11 (64-bit)
