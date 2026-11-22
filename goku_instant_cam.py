@@ -57,6 +57,83 @@ def forehead_gesture(hand_result, face_result):
     return bool(together and near_forehead)
 
 
+
+def transformation_hand_state(hand_result, face_result):
+    """Return (hands_together_near_head, hands_spread_from_head) for transformation."""
+    if not hand_result or not hand_result.multi_hand_landmarks or len(hand_result.multi_hand_landmarks) < 2:
+        return False, False
+    if not face_result or not face_result.detections:
+        return False, False
+
+    box = face_result.detections[0].location_data.relative_bounding_box
+    wrists = []
+    for hand in hand_result.multi_hand_landmarks[:2]:
+        wrist = hand.landmark[0]
+        wrists.append(np.array([wrist.x, wrist.y], dtype=np.float32))
+
+    distance = float(np.linalg.norm(wrists[0] - wrists[1]))
+    midpoint = (wrists[0] + wrists[1]) * 0.5
+    face_center_x = box.xmin + box.width * 0.5
+    head_zone = (box.ymin - 0.12 <= midpoint[1] <= box.ymin + box.height * 1.25)
+    centered = abs(float(midpoint[0]) - face_center_x) < 0.30
+    together = distance < 0.20 and head_zone and centered
+    spread = distance > 0.43 and head_zone and centered
+    return together, spread
+
+
+def apply_super_saiyan_aura(frame, mask, now):
+    """Draw a lightweight golden Super Saiyan-style aura around the segmented subject."""
+    h, w = frame.shape[:2]
+    ys, xs = np.where(mask > 0.32)
+    if len(xs) < 30:
+        return frame
+
+    x0, x1 = max(0, int(xs.min()) - 14), min(w - 1, int(xs.max()) + 14)
+    y0, y1 = max(0, int(ys.min()) - 14), min(h - 1, int(ys.max()) + 14)
+    binary = (mask > 0.22).astype(np.uint8)
+    outer = cv2.dilate(binary, np.ones((9, 9), np.uint8), iterations=1)
+    inner = cv2.erode(binary, np.ones((3, 3), np.uint8), iterations=1)
+    edge = np.clip(outer.astype(np.float32) - inner.astype(np.float32), 0, 1)
+    pulse = 0.72 + 0.18 * np.sin(now * 7.0) + 0.10 * np.sin(now * 13.0)
+
+    glow = cv2.GaussianBlur(edge, (0, 0), 7)
+    glow_alpha = (glow * (0.58 * pulse))[:, :, None]
+    gold = np.zeros_like(frame)
+    gold[:] = (20, 190, 255)
+    out = np.clip(frame.astype(np.float32) * (1.0 - glow_alpha) +
+                  gold.astype(np.float32) * glow_alpha, 0, 255).astype(np.uint8)
+
+    rim_alpha = (edge * (0.88 * pulse))[:, :, None]
+    bright = np.zeros_like(frame)
+    bright[:] = (55, 225, 255)
+    out = np.clip(out.astype(np.float32) * (1.0 - rim_alpha) +
+                  bright.astype(np.float32) * rim_alpha, 0, 255).astype(np.uint8)
+
+    # Animated energy tongues and arcs stay near the silhouette.
+    center = (int((x0 + x1) * 0.5), int((y0 + y1) * 0.52))
+    rx = max(20, int((x1 - x0) * 0.62))
+    ry = max(25, int((y1 - y0) * 0.62))
+    aura_layer = out.copy()
+    for i in range(5):
+        angle = int((now * 115 + i * 72) % 360)
+        axes = (max(8, rx - i * 3), max(10, ry - i * 4))
+        cv2.ellipse(aura_layer, center, axes, 0, angle, angle + 48,
+                    (30, 205, 255), 1 if i % 2 else 2, cv2.LINE_AA)
+
+    for i in range(12):
+        x = x0 + ((i * 31 + int(now * 95)) % max(1, x1 - x0 + 1))
+        y = y0 + ((i * 43 + int(now * 70)) % max(1, y1 - y0 + 1))
+        if binary[y, x] == 0:
+            height = 7 + (i % 5) * 4
+            lean = -1 if i % 2 else 1
+            pts = np.array([[x, y], [x + lean * 3, y - height // 2],
+                            [x - lean * 2, y - height]], dtype=np.int32)
+            cv2.polylines(aura_layer, [pts], False, (40, 235, 255), 1, cv2.LINE_AA)
+
+    out = cv2.addWeighted(out, 1.0, aura_layer, 0.42 * pulse, 0)
+    return out
+
+
 def instant_transmission(output, source_frame, mask, phase, direction):
     """
     Lightweight Goku-inspired Instant Transmission stack:
@@ -251,7 +328,7 @@ def main():
 
     segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
     hands = mp.solutions.hands.Hands(
-        static_image_mode=False, max_num_hands=1, model_complexity=0,
+        static_image_mode=False, max_num_hands=2, model_complexity=0,
         min_detection_confidence=0.55, min_tracking_confidence=0.50
     )
     face_detector = mp.solutions.face_detection.FaceDetection(
@@ -271,11 +348,16 @@ def main():
     cached_hands = None
     cached_face = None
     last_gesture = False
+    transform_armed_at = None
+    transform_cooldown_until = 0.0
+    aura_active = False
 
     print("\\nGOKU INSTANT CAM")
     print("Step out of frame briefly to capture your room background.")
     print("Return, then touch your index + middle fingertips to your forehead.")
     print("Repeat the gesture to reappear.")
+    print("TRANSFORM: cross both hands close in front of your head, then spread them apart quickly.")
+    print("Repeat the transformation gesture to toggle the golden aura off.")
     print("OBS Virtual Camera: leave OBS's own Start Virtual Camera button STOPPED.")
     print("B = recapture background | T = test | Q/ESC = quit\\n")
 
@@ -319,6 +401,18 @@ def main():
 
             now = time.time()
             gesture = forehead_gesture(cached_hands, cached_face)
+            hands_together, hands_spread = transformation_hand_state(cached_hands, cached_face)
+            if hands_together and now >= transform_cooldown_until:
+                if transform_armed_at is None:
+                    transform_armed_at = now
+            if (hands_spread and transform_armed_at is not None and
+                    now - transform_armed_at <= 1.35 and now >= transform_cooldown_until):
+                aura_active = not aura_active
+                transform_armed_at = None
+                transform_cooldown_until = now + 1.8
+                print("SUPER SAIYAN TRANSFORMATION!" if aura_active else "AURA DEACTIVATED")
+            elif transform_armed_at is not None and now - transform_armed_at > 1.35:
+                transform_armed_at = None
             if gesture and now >= cooldown_until and transition_started is None:
                 if gesture_started is None:
                     gesture_started = now
@@ -375,10 +469,19 @@ def main():
             if transition_started is not None:
                 output = instant_transmission(output, frame, cached_mask, effect_phase, direction)
 
+            if aura_active and visible and transition_started is None:
+                output = apply_super_saiyan_aura(output, cached_mask, now)
+
             preview = output.copy()
             if background is None:
                 message = "STEP OUT OF FRAME TO CAPTURE BACKGROUND"
                 color = (0, 210, 255)
+            elif transform_armed_at is not None:
+                message = "TRANSFORMATION READY - SPREAD YOUR ARMS!"
+                color = (40, 225, 255)
+            elif aura_active:
+                message = "SUPER SAIYAN AURA ACTIVE"
+                color = (40, 225, 255)
             elif gesture_started is not None:
                 left = max(0.0, GESTURE_HOLD - (now - gesture_started))
                 message = f"HOLD FINGERS TO FOREHEAD: {left:.1f}s"
