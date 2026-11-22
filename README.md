@@ -12,7 +12,7 @@ The current transition combines four lightweight OpenCV effects:
 - Rapid opacity flicker during vanish and reappearance instead of a smooth fade.
 - A short vertical directional blur at the teleport snap.
 
-These are procedural effects and do not require extra AI models or heavy video assets.
+Additional burst effects now include an expanding shockwave ring, short electric edge sparks, two displaced afterimage echoes, and a brief RGB channel-split glitch. All are procedural OpenCV effects and require no extra AI models or heavy video assets.
 
 ## Windows / low-spec defaults
 
