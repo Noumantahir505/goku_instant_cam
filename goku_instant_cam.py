@@ -58,36 +58,47 @@ def forehead_gesture(hand_result, face_result):
 
 
 
-def transformation_hand_state(hand_result, face_result):
-    """Return close/open two-hand states with forgiving head-and-shoulder bounds."""
+def crossed_hands_gesture(hand_result, face_result):
+    """
+    Detect both hands crossed in front of the face.
+    We compare wrist order with palm order, so this is not just hands being close.
+    Returns (crossed, debug_text).
+    """
     if not hand_result or not hand_result.multi_hand_landmarks or len(hand_result.multi_hand_landmarks) < 2:
-        return False, False, None
+        return False, "SHOW BOTH HANDS"
 
-    wrists = []
-    for hand in hand_result.multi_hand_landmarks[:2]:
-        # Use palm centre rather than wrist alone; this is steadier when hands overlap.
-        palm = hand.landmark[9]
-        wrists.append(np.array([palm.x, palm.y], dtype=np.float32))
+    first, second = hand_result.multi_hand_landmarks[:2]
+    # Wrist (0) and middle-finger knuckle (9) give a useful arm-to-hand direction.
+    w1 = np.array([first.landmark[0].x, first.landmark[0].y], dtype=np.float32)
+    w2 = np.array([second.landmark[0].x, second.landmark[0].y], dtype=np.float32)
+    p1 = np.array([first.landmark[9].x, first.landmark[9].y], dtype=np.float32)
+    p2 = np.array([second.landmark[9].x, second.landmark[9].y], dtype=np.float32)
 
-    distance = float(np.linalg.norm(wrists[0] - wrists[1]))
-    midpoint = (wrists[0] + wrists[1]) * 0.5
+    wrist_dx = float(w1[0] - w2[0])
+    palm_dx = float(p1[0] - p2[0])
+    wrist_distance = float(np.linalg.norm(w1 - w2))
+    palm_distance = float(np.linalg.norm(p1 - p2))
+    # When arms cross, the left/right order at the wrists reverses at the palms.
+    order_is_crossed = wrist_dx * palm_dx < -0.0015
+    hands_overlap = palm_distance < 0.19 and wrist_distance > 0.075
+    crossed_shape = (order_is_crossed and palm_distance < 0.28) or hands_overlap
 
+    midpoint = (p1 + p2) * 0.5
     if face_result and face_result.detections:
         box = face_result.detections[0].location_data.relative_bounding_box
         face_center_x = box.xmin + box.width * 0.5
-        # Include forehead through upper chest: wrists naturally drop when arms open.
-        y_min = max(0.0, box.ymin - 0.25)
-        y_max = min(1.0, box.ymin + box.height * 2.8)
-        centered = abs(float(midpoint[0]) - face_center_x) < 0.42
-        in_zone = y_min <= float(midpoint[1]) <= y_max
+        # Keep the cross gesture around the face and upper chest, not at the waist.
+        y_min = max(0.0, box.ymin - 0.18)
+        y_max = min(1.0, box.ymin + box.height * 2.15)
+        in_face_zone = (abs(float(midpoint[0]) - face_center_x) < 0.34 and
+                        y_min <= float(midpoint[1]) <= y_max)
     else:
-        # Allow the gesture even if face detection briefly drops a frame.
-        centered = 0.12 <= float(midpoint[0]) <= 0.88
-        in_zone = 0.05 <= float(midpoint[1]) <= 0.78
+        in_face_zone = (0.18 <= float(midpoint[0]) <= 0.82 and
+                        0.04 <= float(midpoint[1]) <= 0.68)
 
-    together = distance < 0.29 and centered and in_zone
-    spread = distance > 0.48 and centered and in_zone
-    return together, spread, distance
+    crossed = crossed_shape and in_face_zone
+    debug = f"CROSS CHECK palm:{palm_distance:.2f} wrist:{wrist_distance:.2f}"
+    return bool(crossed), debug
 
 
 def apply_super_saiyan_aura(frame, mask, now):
@@ -416,16 +427,17 @@ def main():
     cached_hands = None
     cached_face = None
     last_gesture = False
-    transform_armed_at = None
+    cross_started_at = None
     transform_cooldown_until = 0.0
+    cross_latched = False
     aura_active = False
 
     print("\\nGOKU INSTANT CAM")
     print("Step out of frame briefly to capture your room background.")
     print("Return, then touch your index + middle fingertips to your forehead.")
     print("Repeat the gesture to reappear.")
-    print("TRANSFORM: cross both hands close in front of your head, then spread them apart quickly.")
-    print("Repeat the transformation gesture to toggle the golden aura off.")
+    print("TRANSFORM: cross both hands/arms in front of your face and hold briefly.")
+    print("Keep the aura active after lowering your hands. Cross again to switch it off.")
     print("OBS Virtual Camera: leave OBS's own Start Virtual Camera button STOPPED.")
     print("B = recapture background | T = test | Q/ESC = quit\\n")
 
@@ -469,18 +481,21 @@ def main():
 
             now = time.time()
             gesture = forehead_gesture(cached_hands, cached_face)
-            hands_together, hands_spread, hand_distance = transformation_hand_state(cached_hands, cached_face)
-            if hands_together and now >= transform_cooldown_until:
-                if transform_armed_at is None:
-                    transform_armed_at = now
-            if (hands_spread and transform_armed_at is not None and
-                    now - transform_armed_at <= 1.35 and now >= transform_cooldown_until):
-                aura_active = not aura_active
-                transform_armed_at = None
-                transform_cooldown_until = now + 1.8
-                print("SUPER SAIYAN TRANSFORMATION!" if aura_active else "AURA DEACTIVATED")
-            elif transform_armed_at is not None and now - transform_armed_at > 1.35:
-                transform_armed_at = None
+            hands_crossed, cross_debug = crossed_hands_gesture(cached_hands, cached_face)
+            # A short hold filters accidental one-frame hand-tracking glitches.
+            if hands_crossed and now >= transform_cooldown_until:
+                if cross_started_at is None:
+                    cross_started_at = now
+                elif now - cross_started_at >= 0.28 and not cross_latched:
+                    aura_active = not aura_active
+                    cross_latched = True
+                    transform_cooldown_until = now + 0.85
+                    print("SUPER SAIYAN TRANSFORMATION!" if aura_active else "AURA DEACTIVATED")
+            else:
+                cross_started_at = None
+                # Must uncross hands before another cross can toggle the aura.
+                if not hands_crossed:
+                    cross_latched = False
             if gesture and now >= cooldown_until and transition_started is None:
                 if gesture_started is None:
                     gesture_started = now
@@ -544,11 +559,11 @@ def main():
             if background is None:
                 message = "STEP OUT OF FRAME TO CAPTURE BACKGROUND"
                 color = (0, 210, 255)
-            elif transform_armed_at is not None:
-                message = "HANDS DETECTED - NOW SPREAD YOUR ARMS!"
+            elif hands_crossed:
+                message = "CROSS DETECTED - SUPER SAIYAN!"
                 color = (40, 225, 255)
-            elif hand_distance is not None:
-                message = f"TRANSFORM HANDS DETECTED: {hand_distance:.2f}"
+            elif "SHOW BOTH HANDS" in cross_debug:
+                message = "SHOW BOTH HANDS TO TRANSFORM"
                 color = (180, 220, 255)
             elif aura_active:
                 message = "SUPER SAIYAN AURA ACTIVE"
