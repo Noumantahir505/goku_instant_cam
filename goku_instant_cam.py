@@ -91,57 +91,116 @@ def transformation_hand_state(hand_result, face_result):
 
 
 def apply_super_saiyan_aura(frame, mask, now):
-    """Draw a lightweight golden Super Saiyan-style aura around the segmented subject."""
+    """High-energy golden Super Saiyan aura: layered glow, flame tongues and lightning."""
     h, w = frame.shape[:2]
-    ys, xs = np.where(mask > 0.32)
+    binary = (mask > 0.24).astype(np.uint8)
+    ys, xs = np.where(binary > 0)
     if len(xs) < 30:
         return frame
 
-    x0, x1 = max(0, int(xs.min()) - 14), min(w - 1, int(xs.max()) + 14)
-    y0, y1 = max(0, int(ys.min()) - 14), min(h - 1, int(ys.max()) + 14)
-    binary = (mask > 0.22).astype(np.uint8)
-    outer = cv2.dilate(binary, np.ones((9, 9), np.uint8), iterations=1)
-    inner = cv2.erode(binary, np.ones((3, 3), np.uint8), iterations=1)
-    edge = np.clip(outer.astype(np.float32) - inner.astype(np.float32), 0, 1)
-    pulse = 0.72 + 0.18 * np.sin(now * 7.0) + 0.10 * np.sin(now * 13.0)
+    x0, x1 = max(0, int(xs.min()) - 42), min(w - 1, int(xs.max()) + 42)
+    y0, y1 = max(0, int(ys.min()) - 48), min(h - 1, int(ys.max()) + 12)
+    roi_mask = binary[y0:y1 + 1, x0:x1 + 1]
+    rh, rw = roi_mask.shape
+    pulse = 0.78 + 0.16 * np.sin(now * 8.5) + 0.06 * np.sin(now * 17.0)
 
-    glow = cv2.GaussianBlur(edge, (0, 0), 7)
-    glow_alpha = (glow * (0.58 * pulse))[:, :, None]
-    gold = np.zeros_like(frame)
-    gold[:] = (20, 190, 255)
-    out = np.clip(frame.astype(np.float32) * (1.0 - glow_alpha) +
-                  gold.astype(np.float32) * glow_alpha, 0, 255).astype(np.uint8)
+    # Build several expanding rings around the segmented silhouette.
+    k1 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+    k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
+    k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (57, 57))
+    ring1 = cv2.subtract(cv2.dilate(roi_mask, k1), roi_mask)
+    ring2 = cv2.subtract(cv2.dilate(roi_mask, k2), cv2.dilate(roi_mask, k1))
+    ring3 = cv2.subtract(cv2.dilate(roi_mask, k3), cv2.dilate(roi_mask, k2))
 
-    rim_alpha = (edge * (0.88 * pulse))[:, :, None]
-    bright = np.zeros_like(frame)
-    bright[:] = (55, 225, 255)
-    out = np.clip(out.astype(np.float32) * (1.0 - rim_alpha) +
-                  bright.astype(np.float32) * rim_alpha, 0, 255).astype(np.uint8)
+    # Wide amber halo, bright golden middle and near-white hot edge.
+    aura_small = cv2.GaussianBlur(ring1.astype(np.float32), (0, 0), 4)
+    aura_mid = cv2.GaussianBlur(ring2.astype(np.float32), (0, 0), 7)
+    aura_wide = cv2.GaussianBlur(ring3.astype(np.float32), (0, 0), 11)
+    out = frame.copy()
+    patch = out[y0:y1 + 1, x0:x1 + 1].astype(np.float32)
+    halo = np.zeros_like(patch)
+    halo[:] = (0, 150, 255)       # amber
+    mid = np.zeros_like(patch)
+    mid[:] = (0, 215, 255)        # golden yellow
+    hot = np.zeros_like(patch)
+    hot[:] = (80, 245, 255)        # hot yellow-white
+    a3 = (aura_wide * (0.42 * pulse))[:, :, None]
+    a2 = (aura_mid * (0.58 * pulse))[:, :, None]
+    a1 = (aura_small * (0.74 * pulse))[:, :, None]
+    patch = patch * (1.0 - a3) + halo * a3
+    patch = patch * (1.0 - a2) + mid * a2
+    patch = patch * (1.0 - a1) + hot * a1
+    out[y0:y1 + 1, x0:x1 + 1] = np.clip(patch, 0, 255).astype(np.uint8)
 
-    # Animated energy tongues and arcs stay near the silhouette.
-    center = (int((x0 + x1) * 0.5), int((y0 + y1) * 0.52))
-    rx = max(20, int((x1 - x0) * 0.62))
-    ry = max(25, int((y1 - y0) * 0.62))
-    aura_layer = out.copy()
+    # Flickering flame tongues rise from both sides and above the body.
+    flame_layer = out.copy()
+    contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        contour = max(contours, key=cv2.contourArea).reshape(-1, 2)
+        left_edge = contour[np.argsort(contour[:, 0])[:max(1, len(contour) // 5)]]
+        right_edge = contour[np.argsort(contour[:, 0])[-max(1, len(contour) // 5):]]
+        for side, edge_points in ((-1, left_edge), (1, right_edge)):
+            if len(edge_points) == 0:
+                continue
+            for i in range(8):
+                p = edge_points[(i * max(1, len(edge_points) // 8) + int(now * 13) % len(edge_points)) % len(edge_points)]
+                px, py = int(p[0]) + x0, int(p[1]) + y0
+                height = 18 + int((0.5 + 0.5 * np.sin(now * 11 + i * 2.1)) * 34)
+                sway = int(np.sin(now * 9 + i * 1.8) * 10)
+                base_x = px + side * (5 + (i % 3) * 3)
+                tip_x = base_x + sway + side * int(height * 0.18)
+                tip_y = max(0, py - height)
+                mid_x = (base_x + tip_x) // 2 + side * 5
+                mid_y = (py + tip_y) // 2
+                cv2.polylines(flame_layer, [np.array([
+                    [base_x, py], [mid_x, mid_y], [tip_x, tip_y]
+                ], dtype=np.int32)], False, (0, 190, 255), 3, cv2.LINE_AA)
+                cv2.line(flame_layer, (mid_x, mid_y), (tip_x, tip_y),
+                         (90, 255, 255), 1, cv2.LINE_AA)
+
+    # Tall flame spikes above the head, animated independently.
+    head_x = int((x0 + x1) * 0.5)
+    head_y = max(4, y0 + 12)
+    for i in range(7):
+        base_x = head_x + int((i - 3) * 11)
+        height = 22 + int((0.5 + 0.5 * np.sin(now * 12 + i * 1.7)) * 42)
+        lean = int(np.sin(now * 8 + i) * 9)
+        cv2.polylines(flame_layer, [np.array([
+            [base_x - 4, head_y + 18],
+            [base_x + lean, head_y - height // 2],
+            [base_x + lean * 2, max(0, head_y - height)]
+        ], dtype=np.int32)], False, (0, 205, 255), 3, cv2.LINE_AA)
+
+    out = cv2.addWeighted(out, 1.0, flame_layer, 0.72 * pulse, 0)
+
+    # Fast jagged electric bolts around the aura, not a static oval ring.
+    lightning = out.copy()
     for i in range(5):
-        angle = int((now * 115 + i * 72) % 360)
-        axes = (max(8, rx - i * 3), max(10, ry - i * 4))
-        cv2.ellipse(aura_layer, center, axes, 0, angle, angle + 48,
-                    (30, 205, 255), 1 if i % 2 else 2, cv2.LINE_AA)
+        side = -1 if i % 2 == 0 else 1
+        anchor_x = x0 - 12 if side < 0 else x1 + 12
+        anchor_y = y0 + int((i + 1) * (y1 - y0) / 6)
+        phase = now * 10 + i * 2.4
+        points = [[anchor_x, anchor_y]]
+        x, y = anchor_x, anchor_y
+        for j in range(4):
+            x += side * int(5 + 5 * abs(np.sin(phase + j)))
+            y -= 7 + int(5 * abs(np.cos(phase + j * 1.3)))
+            points.append([max(0, min(w - 1, x)), max(0, min(h - 1, y))])
+        cv2.polylines(lightning, [np.array(points, dtype=np.int32)], False,
+                      (0, 225, 255), 2, cv2.LINE_AA)
+        cv2.polylines(lightning, [np.array(points, dtype=np.int32)], False,
+                      (150, 255, 255), 1, cv2.LINE_AA)
 
-    for i in range(12):
-        x = x0 + ((i * 31 + int(now * 95)) % max(1, x1 - x0 + 1))
-        y = y0 + ((i * 43 + int(now * 70)) % max(1, y1 - y0 + 1))
-        if binary[y, x] == 0:
-            height = 7 + (i % 5) * 4
-            lean = -1 if i % 2 else 1
-            pts = np.array([[x, y], [x + lean * 3, y - height // 2],
-                            [x - lean * 2, y - height]], dtype=np.int32)
-            cv2.polylines(aura_layer, [pts], False, (40, 235, 255), 1, cv2.LINE_AA)
+    # Small hot sparks drift upward in the aura margin.
+    for i in range(18):
+        sx = x0 + ((i * 23 + int(now * (34 + i % 5))) % max(1, x1 - x0 + 1))
+        sy = y0 + ((i * 41 - int(now * (28 + i % 7))) % max(1, y1 - y0 + 1))
+        if binary[sy, sx] == 0:
+            radius = 1 + (i % 2)
+            cv2.circle(lightning, (sx, sy), radius, (40, 240, 255), -1, cv2.LINE_AA)
 
-    out = cv2.addWeighted(out, 1.0, aura_layer, 0.42 * pulse, 0)
+    out = cv2.addWeighted(out, 1.0, lightning, 0.82 * pulse, 0)
     return out
-
 
 def instant_transmission(output, source_frame, mask, phase, direction):
     """
