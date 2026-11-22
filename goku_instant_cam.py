@@ -3,8 +3,8 @@ Goku Instant Cam
 Lightweight Python-only webcam effect inspired by Goku's Instant Transmission.
 
 Gesture: bring index + middle fingertips together to the forehead.
-Visual: a very brief blue-white flash, a thin afterimage/speed smear, then
-the subject is gone. No energy rings, orbiting sparks, or surrounding aura.
+Visual: vertical energy streaks, localized space-warp distortion, rapid silhouette flicker,
+and a short vertical motion smear.
 """
 import argparse
 import sys
@@ -18,7 +18,7 @@ WINDOW = "Goku Instant Cam"
 WIDTH, HEIGHT, FPS = 640, 480, 20
 SMALL_W, SMALL_H = 320, 240
 GESTURE_HOLD = 0.55
-TRANSITION_TIME = 0.32
+TRANSITION_TIME = 0.56
 
 
 def arguments():
@@ -59,52 +59,86 @@ def forehead_gesture(hand_result, face_result):
 
 def instant_transmission(output, source_frame, mask, phase, direction):
     """
-    Short Instant Transmission cue: a cold flash, bright silhouette edge and
-    one directional afterimage. No rings, orbiting particles or long fade.
+    Lightweight Goku-inspired Instant Transmission stack:
+    vertical energy streaks, localized wave/noise displacement,
+    flicker/dissolve silhouette and a short vertical directional blur.
     """
-    if phase >= 0.48:
+    if phase >= 0.62:
         return output
 
     h, w = output.shape[:2]
-    strength = max(0.0, 1.0 - phase / 0.48)
-    out = output.astype(np.float32)
+    out = output.copy()
+    strength = max(0.0, 1.0 - phase / 0.62)
+    active = (mask > 0.12).astype(np.uint8)
+    ys, xs = np.where(mask > 0.30)
 
-    # Localized cool-white flash around the subject, not a full-screen fade.
-    soft = cv2.GaussianBlur(mask, (0, 0), 8)
-    flash = max(0.0, 1.0 - phase / 0.12)
-    glow_alpha = (soft * (0.24 * strength + 0.38 * flash))[:, :, None]
-    cool_white = np.zeros_like(output, dtype=np.float32)
-    cool_white[:] = (255, 248, 226)  # BGR: cool blue-white
-    out = out * (1.0 - glow_alpha) + cool_white * glow_alpha
-
-    # Fine bright edge around the silhouette, visible for only a few frames.
-    binary = (mask > 0.20).astype(np.uint8)
-    expanded = cv2.dilate(binary, np.ones((7, 7), np.uint8), iterations=1)
-    edge = np.clip(expanded.astype(np.float32) - binary.astype(np.float32), 0, 1)
-    edge_alpha = (edge * (0.72 * strength))[:, :, None]
-    out = out * (1.0 - edge_alpha) + cool_white * edge_alpha
-
-    # One displaced, tinted afterimage gives the characteristic instant snap.
-    ys, xs = np.where(mask > 0.35)
     if len(xs) > 20:
-        dx = int((-1 if direction < 0 else 1) * (8 + 22 * strength))
-        matrix = np.float32([[1, 0, dx], [0, 1, 0]])
-        ghost_frame = cv2.warpAffine(
-            source_frame, matrix, (w, h), flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT
-        )
-        ghost_mask = cv2.warpAffine(
-            mask, matrix, (w, h), flags=cv2.INTER_LINEAR,
-            borderMode=cv2.BORDER_CONSTANT
-        )
-        ghost_tint = cv2.addWeighted(
-            ghost_frame, 0.58,
-            np.full_like(ghost_frame, (255, 235, 190)), 0.42, 0
-        ).astype(np.float32)
-        ghost_alpha = (ghost_mask * (0.38 * strength))[:, :, None]
-        out = out * (1.0 - ghost_alpha) + ghost_tint * ghost_alpha
+        x0, x1 = max(0, int(xs.min()) - 18), min(w - 1, int(xs.max()) + 18)
+        y0, y1 = max(0, int(ys.min()) - 18), min(h - 1, int(ys.max()) + 18)
 
-    return np.clip(out, 0, 255).astype(np.uint8)
+        # 1) Wave warp / deterministic noise displacement, localized to subject.
+        roi = out[y0:y1 + 1, x0:x1 + 1]
+        rh, rw = roi.shape[:2]
+        yy, xx = np.indices((rh, rw), dtype=np.float32)
+        time_phase = phase * 34.0
+        wave_x = (np.sin(yy * 0.095 + time_phase) * 3.2 +
+                  np.sin(yy * 0.037 - time_phase * 0.7) * 1.8) * strength
+        wave_y = np.sin(xx * 0.045 + time_phase) * 1.2 * strength
+        map_x = np.clip(xx + wave_x, 0, rw - 1).astype(np.float32)
+        map_y = np.clip(yy + wave_y, 0, rh - 1).astype(np.float32)
+        warped = cv2.remap(roi, map_x, map_y, cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_REFLECT)
+        local_mask = cv2.GaussianBlur(mask[y0:y1 + 1, x0:x1 + 1],
+                                      (0, 0), 5)
+        warp_alpha = (local_mask * (0.72 * strength))[:, :, None]
+        out[y0:y1 + 1, x0:x1 + 1] = np.clip(
+            roi.astype(np.float32) * (1.0 - warp_alpha) +
+            warped.astype(np.float32) * warp_alpha, 0, 255
+        ).astype(np.uint8)
+
+        # 2) Vertical directional blur at the actual snap moment.
+        snap = max(0.0, 1.0 - abs(phase - 0.22) / 0.16)
+        if snap > 0:
+            blurred = cv2.blur(out, (1, 13))
+            blur_mask = cv2.GaussianBlur(mask, (0, 0), 7)
+            blur_alpha = (blur_mask * (0.78 * snap))[:, :, None]
+            out = cv2.addWeighted(out, 1.0, blurred, 0.0, 0)
+            out = np.clip(out.astype(np.float32) * (1.0 - blur_alpha) +
+                          blurred.astype(np.float32) * blur_alpha, 0, 255).astype(np.uint8)
+
+        # 3) Vertical blue-white energy streaks around the silhouette.
+        streak_layer = out.copy()
+        streak_strength = min(1.0, strength * 1.35)
+        count = max(5, min(22, (x1 - x0) // 15))
+        for i in range(count):
+            # Deterministic positions avoid per-frame random-number overhead.
+            x = x0 + ((i * 37 + int(phase * 190)) % max(1, x1 - x0 + 1))
+            top = max(0, y0 - ((i * 19) % 34))
+            bottom = min(h - 1, y1 + ((i * 13) % 30))
+            offset = int(np.sin(phase * 45 + i * 1.7) * 5)
+            x = max(0, min(w - 1, x + offset))
+            cv2.line(streak_layer, (x, top), (x, bottom),
+                     (255, 238, 205), 1 if i % 3 else 2, cv2.LINE_AA)
+        streak_alpha = 0.42 * streak_strength
+        out = cv2.addWeighted(out, 1.0 - streak_alpha,
+                              streak_layer, streak_alpha, 0)
+
+        # Brief cold flash and sharp silhouette rim.
+        flash = max(0.0, 1.0 - phase / 0.16)
+        soft = cv2.GaussianBlur(mask, (0, 0), 8)
+        flash_alpha = (soft * (0.48 * flash))[:, :, None]
+        cool = np.zeros_like(out)
+        cool[:] = (255, 248, 226)
+        out = np.clip(out.astype(np.float32) * (1.0 - flash_alpha) +
+                      cool.astype(np.float32) * flash_alpha, 0, 255).astype(np.uint8)
+
+        binary = (mask > 0.20).astype(np.uint8)
+        edge = cv2.dilate(binary, np.ones((5, 5), np.uint8), iterations=1) - binary
+        edge_alpha = (edge.astype(np.float32) * (0.70 * strength))[:, :, None]
+        out = np.clip(out.astype(np.float32) * (1.0 - edge_alpha) +
+                      cool.astype(np.float32) * edge_alpha, 0, 255).astype(np.uint8)
+
+    return out
 
 def main():
     args = arguments()
@@ -239,9 +273,23 @@ def main():
                 effect_phase = phase
                 direction = -1 if transition_from_visible else 1
                 if transition_from_visible:
-                    opacity = 1.0 if phase < 0.10 else 0.0
+                    # Hold, then rapidly flicker/dissolve before the hard vanish.
+                    if phase < 0.10:
+                        opacity = 1.0
+                    elif phase < 0.34:
+                        flicker = (int(phase * 115) % 2)
+                        opacity = 0.12 if flicker else 0.88
+                    else:
+                        opacity = 0.0
                 else:
-                    opacity = 0.0 if phase < 0.10 else 1.0
+                    # Rebuild the silhouette with the reverse flicker sequence.
+                    if phase < 0.20:
+                        opacity = 0.0
+                    elif phase < 0.44:
+                        flicker = (int(phase * 115) % 2)
+                        opacity = 0.12 if flicker else 0.88
+                    else:
+                        opacity = 1.0
 
             base = background if background is not None else np.zeros_like(frame)
             alpha = (cached_mask * opacity)[:, :, None]
