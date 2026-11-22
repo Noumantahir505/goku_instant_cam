@@ -59,26 +59,35 @@ def forehead_gesture(hand_result, face_result):
 
 
 def transformation_hand_state(hand_result, face_result):
-    """Return (hands_together_near_head, hands_spread_from_head) for transformation."""
+    """Return close/open two-hand states with forgiving head-and-shoulder bounds."""
     if not hand_result or not hand_result.multi_hand_landmarks or len(hand_result.multi_hand_landmarks) < 2:
-        return False, False
-    if not face_result or not face_result.detections:
-        return False, False
+        return False, False, None
 
-    box = face_result.detections[0].location_data.relative_bounding_box
     wrists = []
     for hand in hand_result.multi_hand_landmarks[:2]:
-        wrist = hand.landmark[0]
-        wrists.append(np.array([wrist.x, wrist.y], dtype=np.float32))
+        # Use palm centre rather than wrist alone; this is steadier when hands overlap.
+        palm = hand.landmark[9]
+        wrists.append(np.array([palm.x, palm.y], dtype=np.float32))
 
     distance = float(np.linalg.norm(wrists[0] - wrists[1]))
     midpoint = (wrists[0] + wrists[1]) * 0.5
-    face_center_x = box.xmin + box.width * 0.5
-    head_zone = (box.ymin - 0.12 <= midpoint[1] <= box.ymin + box.height * 1.25)
-    centered = abs(float(midpoint[0]) - face_center_x) < 0.30
-    together = distance < 0.20 and head_zone and centered
-    spread = distance > 0.43 and head_zone and centered
-    return together, spread
+
+    if face_result and face_result.detections:
+        box = face_result.detections[0].location_data.relative_bounding_box
+        face_center_x = box.xmin + box.width * 0.5
+        # Include forehead through upper chest: wrists naturally drop when arms open.
+        y_min = max(0.0, box.ymin - 0.25)
+        y_max = min(1.0, box.ymin + box.height * 2.8)
+        centered = abs(float(midpoint[0]) - face_center_x) < 0.42
+        in_zone = y_min <= float(midpoint[1]) <= y_max
+    else:
+        # Allow the gesture even if face detection briefly drops a frame.
+        centered = 0.12 <= float(midpoint[0]) <= 0.88
+        in_zone = 0.05 <= float(midpoint[1]) <= 0.78
+
+    together = distance < 0.29 and centered and in_zone
+    spread = distance > 0.48 and centered and in_zone
+    return together, spread, distance
 
 
 def apply_super_saiyan_aura(frame, mask, now):
@@ -401,7 +410,7 @@ def main():
 
             now = time.time()
             gesture = forehead_gesture(cached_hands, cached_face)
-            hands_together, hands_spread = transformation_hand_state(cached_hands, cached_face)
+            hands_together, hands_spread, hand_distance = transformation_hand_state(cached_hands, cached_face)
             if hands_together and now >= transform_cooldown_until:
                 if transform_armed_at is None:
                     transform_armed_at = now
@@ -477,8 +486,11 @@ def main():
                 message = "STEP OUT OF FRAME TO CAPTURE BACKGROUND"
                 color = (0, 210, 255)
             elif transform_armed_at is not None:
-                message = "TRANSFORMATION READY - SPREAD YOUR ARMS!"
+                message = "HANDS DETECTED - NOW SPREAD YOUR ARMS!"
                 color = (40, 225, 255)
+            elif hand_distance is not None:
+                message = f"TRANSFORM HANDS DETECTED: {hand_distance:.2f}"
+                color = (180, 220, 255)
             elif aura_active:
                 message = "SUPER SAIYAN AURA ACTIVE"
                 color = (40, 225, 255)
