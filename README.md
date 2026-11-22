@@ -1,36 +1,53 @@
 # Goku Instant Cam
 
-A lightweight, Python-only Windows virtual webcam effect inspired by Goku's **Instant Transmission**.
+A lightweight, Python-only Windows webcam effect inspired by Goku's **Instant Transmission**.
 
-The visual is intentionally restrained and close to the technique: the two-finger forehead gesture, a very brief cool-white/blue flash, a narrow afterimage/speed smear, and the subject disappearing or reappearing. **There are no circular energy rings, orbiting sparks, or continuous aura effects.**
+The effect is a quick snap, not a fade: a short cool-white/blue flash, a bright subject edge, one directional afterimage, then an abrupt disappearance or reappearance. No circular energy rings, orbiting sparks, or continuous aura.
 
-## Designed for a low-spec PC
+## Windows / low-spec defaults
 
-- Python 3.11, 64-bit
-- 640x480 webcam input/output by default
+- Python 3.11 (64-bit)
+- 640x480 output at 20 FPS
 - AI inference at 320x240
-- MediaPipe Selfie Segmentation + lightweight Face Detection + one-hand tracking
-- Hand landmarks are processed every second frame; face detection every third frame
-- No browser, Node.js, Electron, HTML, CSS, or JavaScript
+- MediaPipe selfie segmentation, face detection and one-hand tracking
+- Hand tracking every second frame; face detection every third frame
+- No browser, Node.js, Electron, HTML, CSS or JavaScript
 - Webcam frames are processed locally
 
-## Windows setup
+## Important: correct OBS workflow
 
-1. Install Python 3.11 (64-bit). Enable **Add Python to PATH**.
+**Do not click "Start Virtual Camera" in OBS while Goku Instant Cam is running.**
+
+The Python app sends its processed frames directly to the installed **OBS Virtual Camera** device using pyvirtualcam. OBS's built-in virtual camera is a single output device, so OBS cannot own that same output at the same time as the Python app. This is why starting OBS Virtual Camera first causes a conflict.
+
+For Zoom / Google Meet / Teams:
+
+1. Install OBS Studio once. You do not need to keep OBS open.
+2. If OBS is open, make sure its **Start Virtual Camera** button is stopped. It should say "Start Virtual Camera", not "Stop Virtual Camera".
+3. Close Zoom, Teams and browser tabs that may already be using the camera.
+4. Run `RUN_GOKU_CAM.bat`.
+5. Wait for the terminal to say `Virtual camera connected: OBS Virtual Camera`.
+6. Now open Zoom, Google Meet or Teams.
+7. Choose **OBS Virtual Camera** in that app's camera settings. This is the processed Goku feed from Python.
+
+Do not select the physical webcam in Zoom. Do not start OBS's own virtual camera output.
+
+If you want to compose scenes inside OBS itself, you need a second virtual-camera device (for example Unity Capture) for Python, then OBS can capture that separate device and output its own OBS Virtual Camera. That is a different workflow and uses more resources. For a 4 GB RAM PC, the direct Python-to-OBS-virtual-camera workflow above is recommended.
+
+## Install and run
+
+1. Install Python 3.11 (64-bit) and tick **Add Python to PATH**.
 2. Install OBS Studio.
-3. Download this repository as a ZIP and extract it.
-4. Open OBS and click **Start Virtual Camera**.
-5. Double-click `RUN_GOKU_CAM.bat`. The first run installs Python packages and may take a few minutes.
-6. In the Goku Instant Cam preview, step out of camera view for about 2 seconds. The empty room is captured as the background.
-7. Return to the camera. Bring your index and middle fingertips together and touch them to your forehead. Hold for about half a second.
-8. Repeat the same gesture to reappear.
-
-In Zoom, Google Meet, or Microsoft Teams, choose **OBS Virtual Camera** as the camera.
+3. Download this repository as ZIP and extract it.
+4. Double-click `RUN_GOKU_CAM.bat`. First run installs dependencies.
+5. Step out of camera view for about 2 seconds to capture the empty room.
+6. Return and touch your index + middle fingertips together to your forehead. Hold for about half a second.
+7. Repeat the gesture to reappear.
 
 ## Controls
 
-- **B**: recapture the empty-room background. Step out of frame afterward.
-- **T**: test the disappear/reappear effect without making the gesture.
+- **B**: reset and recapture the empty-room background.
+- **T**: test the teleport effect without the gesture.
 - **Q** or **Esc**: quit.
 
 ## Manual setup
@@ -55,18 +72,15 @@ If your webcam is not camera 0:
 python goku_instant_cam.py --camera 1
 ```
 
-## Performance notes
-
-The defaults are deliberately conservative for a 4 GB RAM computer. Close unnecessary apps before starting a meeting. If the preview stutters, reduce output size to 480x360 and frame rate to 15:
+If the PC stutters, reduce output size and frame rate:
 
 ```powershell
 python goku_instant_cam.py --width 480 --height 360 --fps 15
 ```
 
-Virtual camera output requires OBS Studio's Virtual Camera to be started before launching this app. If the app says the virtual camera is unavailable, the preview still runs; start OBS Virtual Camera and restart Goku Instant Cam.
-
 ## Notes
 
-- The effect is a webcam illusion. It uses the captured empty-room background to hide the subject when they teleport.
-- Gesture detection works best with the face and one hand clearly visible, even lighting, and the hand not covering the whole face.
-- This repository contains a standalone implementation and does not import the previous VanishCam project.
+- The effect uses a captured empty-room background to hide the subject.
+- Gesture recognition works best with even lighting, face and hand visible.
+- This is a webcam illusion, not actual movement or scene teleportation.
+- The project is a standalone Python implementation.
