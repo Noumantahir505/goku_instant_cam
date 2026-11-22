@@ -19,7 +19,7 @@ Additional burst effects now include an expanding shockwave ring, short electric
 - Python 3.11 (64-bit)
 - 640x480 output at 20 FPS
 - AI inference at 320x240
-- MediaPipe selfie segmentation, face detection and one-hand tracking
+- MediaPipe selfie segmentation, face detection and two-hand tracking
 - Hand tracking every second frame; face detection every third frame
 - No browser, Node.js, Electron, HTML, CSS or JavaScript
 - Webcam frames are processed locally
@@ -53,6 +53,17 @@ If you want to compose scenes inside OBS itself, you need a second virtual-camer
 5. Step out of camera view for about 2 seconds to capture the empty room.
 6. Return and touch your index + middle fingertips together to your forehead. Hold for about half a second.
 7. Repeat the gesture to reappear.
+
+## Super Saiyan transformation
+
+A second, separate two-hand gesture activates a persistent Goku-inspired golden aura:
+
+1. Keep both hands visible to the webcam.
+2. Bring both wrists/hands together and cross your forearms in front of your head.
+3. Quickly spread both arms outward.
+4. The app toggles the golden aura on. Repeat the same close-then-spread gesture to turn it off.
+
+The aura uses the existing person segmentation mask to add a pulsing golden rim, soft glow, animated energy arcs and small rising sparks. It is a stylized webcam effect, not a full-body anime transformation. The camera needs to see both hands; good lighting and a clear background help recognition.
 
 ## Controls
 
