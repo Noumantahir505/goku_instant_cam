@@ -304,7 +304,7 @@ def instant_transmission(output, source_frame, mask, phase, direction):
             cv2.circle(wave_layer, center, radius, (255, 245, 220),
                        max(1, int(2 * wave_strength)), cv2.LINE_AA)
             cv2.circle(wave_layer, center, max(1, radius - 5),
-                       max(1, int(1 * wave_strength)), (255, 190, 120), 1, cv2.LINE_AA)
+                       (255, 190, 120), 1, cv2.LINE_AA)
             out = cv2.addWeighted(out, 1.0, wave_layer,
                                   0.48 * wave_strength, 0)
 
