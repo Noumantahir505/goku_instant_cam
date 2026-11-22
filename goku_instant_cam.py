@@ -160,7 +160,7 @@ def apply_super_saiyan_aura(frame, mask, now):
 
     # Tall flame spikes above the head, animated independently.
     head_x = int((x0 + x1) * 0.5)
-    head_y = max(4, y0 + 12)
+    head_y = max(4, int(ys.min()) + 5)
     for i in range(7):
         base_x = head_x + int((i - 3) * 11)
         height = 22 + int((0.5 + 0.5 * np.sin(now * 12 + i * 1.7)) * 42)
