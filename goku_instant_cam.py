@@ -18,7 +18,7 @@ WINDOW = "Goku Instant Cam"
 WIDTH, HEIGHT, FPS = 640, 480, 20
 SMALL_W, SMALL_H = 320, 240
 GESTURE_HOLD = 0.55
-TRANSITION_TIME = 0.34
+TRANSITION_TIME = 0.32
 
 
 def arguments():
@@ -57,58 +57,54 @@ def forehead_gesture(hand_result, face_result):
     return bool(together and near_forehead)
 
 
-def instant_transmission(frame, mask, phase, direction):
+def instant_transmission(output, source_frame, mask, phase, direction):
     """
-    Minimal anime-style transmission cue: a short cold flash and a narrow
-    directional afterimage. Deliberately no circular rings or particle aura.
+    Short Instant Transmission cue: a cold flash, bright silhouette edge and
+    one directional afterimage. No rings, orbiting particles or long fade.
     """
-    if phase <= 0.0:
-        return frame
+    if phase >= 0.48:
+        return output
 
-    h, w = frame.shape[:2]
-    out = frame.copy()
+    h, w = output.shape[:2]
+    strength = max(0.0, 1.0 - phase / 0.48)
+    out = output.astype(np.float32)
 
-    # A very short blue-white exposure pop at the start of either transition.
-    flash = max(0.0, 1.0 - phase * 7.0)
-    if flash > 0:
-        tint = np.zeros_like(out)
-        tint[:] = (245, 238, 220)  # cool white in BGR
-        out = cv2.addWeighted(out, 1.0 - 0.30 * flash, tint, 0.30 * flash, 0)
+    # Localized cool-white flash around the subject, not a full-screen fade.
+    soft = cv2.GaussianBlur(mask, (0, 0), 8)
+    flash = max(0.0, 1.0 - phase / 0.12)
+    glow_alpha = (soft * (0.24 * strength + 0.38 * flash))[:, :, None]
+    cool_white = np.zeros_like(output, dtype=np.float32)
+    cool_white[:] = (255, 248, 226)  # BGR: cool blue-white
+    out = out * (1.0 - glow_alpha) + cool_white * glow_alpha
 
-    # Brief horizontal/diagonal smear at the silhouette edge, like an anime
-    # frame-blend rather than a glowing ring around the person.
-    ys, xs = np.where(mask > 0.48)
-    if len(xs) > 20 and phase < 0.58:
-        x1, x2 = int(xs.min()), int(xs.max())
-        y1, y2 = int(ys.min()), int(ys.max())
-        dx = int((1.0 if direction < 0 else -1.0) * (1.0 - phase / 0.58) * 13)
-        ghost = np.zeros_like(out)
-        shift_matrix = np.float32([[1, 0, dx], [0, 1, 0]])
-        shifted = cv2.warpAffine(frame, shift_matrix, (w, h),
-                                 flags=cv2.INTER_LINEAR,
-                                 borderMode=cv2.BORDER_CONSTANT)
-        ghost_mask = cv2.warpAffine(mask, shift_matrix, (w, h),
-                                    flags=cv2.INTER_LINEAR,
-                                    borderMode=cv2.BORDER_CONSTANT)
-        alpha = (ghost_mask * 0.20 * (1.0 - phase / 0.58))[:, :, None]
-        ghost[:] = (shifted.astype(np.float32) * alpha).astype(np.uint8)
-        out = cv2.add(out, ghost)
+    # Fine bright edge around the silhouette, visible for only a few frames.
+    binary = (mask > 0.20).astype(np.uint8)
+    expanded = cv2.dilate(binary, np.ones((7, 7), np.uint8), iterations=1)
+    edge = np.clip(expanded.astype(np.float32) - binary.astype(np.float32), 0, 1)
+    edge_alpha = (edge * (0.72 * strength))[:, :, None]
+    out = out * (1.0 - edge_alpha) + cool_white * edge_alpha
 
-        # A few very fine speed lines, visible only during the first instant.
-        line_strength = max(0.0, 1.0 - phase / 0.30)
-        if line_strength > 0:
-            overlay = out.copy()
-            cy = (y1 + y2) // 2
-            for i in range(5):
-                yy = y1 + int((y2 - y1) * (i + 1) / 6)
-                start_x = max(0, x1 - 22 - i * 3) if direction < 0 else min(w - 1, x2 + 10)
-                end_x = min(w - 1, x1 + 8) if direction < 0 else max(0, x2 + 22 + i * 3)
-                cv2.line(overlay, (start_x, yy), (end_x, yy + (i - 2) * 2),
-                         (235, 225, 190), 1, cv2.LINE_AA)
-            out = cv2.addWeighted(overlay, 0.35 * line_strength, out,
-                                  1.0 - 0.35 * line_strength, 0)
-    return out
+    # One displaced, tinted afterimage gives the characteristic instant snap.
+    ys, xs = np.where(mask > 0.35)
+    if len(xs) > 20:
+        dx = int((-1 if direction < 0 else 1) * (8 + 22 * strength))
+        matrix = np.float32([[1, 0, dx], [0, 1, 0]])
+        ghost_frame = cv2.warpAffine(
+            source_frame, matrix, (w, h), flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT
+        )
+        ghost_mask = cv2.warpAffine(
+            mask, matrix, (w, h), flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT
+        )
+        ghost_tint = cv2.addWeighted(
+            ghost_frame, 0.58,
+            np.full_like(ghost_frame, (255, 235, 190)), 0.42, 0
+        ).astype(np.float32)
+        ghost_alpha = (ghost_mask * (0.38 * strength))[:, :, None]
+        out = out * (1.0 - ghost_alpha) + ghost_tint * ghost_alpha
 
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 def main():
     args = arguments()
@@ -134,9 +130,13 @@ def main():
                 fmt=pyvirtualcam.PixelFormat.BGR
             )
             print("Virtual camera connected:", virtual_cam.device)
+            print("IMPORTANT: Do NOT click 'Start Virtual Camera' inside OBS.")
+            print("Python is sending the processed frames directly to OBS Virtual Camera.")
+            print("Open Zoom/Meet/Teams and select OBS Virtual Camera.")
         except Exception as exc:
             print("Virtual camera is not ready:", exc)
-            print("Start OBS Virtual Camera, then restart this app.")
+            print("In OBS, make sure 'Start Virtual Camera' is STOPPED.")
+            print("Close any app using the camera, then restart Goku Instant Cam.")
             print("Preview mode will continue.")
 
     segmenter = mp.solutions.selfie_segmentation.SelfieSegmentation(model_selection=1)
@@ -166,6 +166,7 @@ def main():
     print("Step out of frame briefly to capture your room background.")
     print("Return, then touch your index + middle fingertips to your forehead.")
     print("Repeat the gesture to reappear.")
+    print("OBS Virtual Camera: leave OBS's own Start Virtual Camera button STOPPED.")
     print("B = recapture background | T = test | Q/ESC = quit\\n")
 
     try:
@@ -233,11 +234,14 @@ def main():
                 effect_phase = 0.0
                 direction = -1 if visible else 1
             else:
-                # A sharp vanish and slightly softer materialization.
-                eased = phase * phase * (3.0 - 2.0 * phase)
-                opacity = (1.0 - eased) if transition_from_visible else eased
+                # Instant Transmission is a snap, not a dissolve:
+                # a short flash/afterimage, then a hard disappearance/appearance.
                 effect_phase = phase
                 direction = -1 if transition_from_visible else 1
+                if transition_from_visible:
+                    opacity = 1.0 if phase < 0.10 else 0.0
+                else:
+                    opacity = 0.0 if phase < 0.10 else 1.0
 
             base = background if background is not None else np.zeros_like(frame)
             alpha = (cached_mask * opacity)[:, :, None]
@@ -245,7 +249,7 @@ def main():
                       base.astype(np.float32) * (1.0 - alpha)).astype(np.uint8)
 
             if transition_started is not None:
-                output = instant_transmission(output, cached_mask, effect_phase, direction)
+                output = instant_transmission(output, frame, cached_mask, effect_phase, direction)
 
             preview = output.copy()
             if background is None:
