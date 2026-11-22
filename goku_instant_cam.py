@@ -102,115 +102,129 @@ def crossed_hands_gesture(hand_result, face_result):
 
 
 def apply_super_saiyan_aura(frame, mask, now):
-    """High-energy golden Super Saiyan aura: layered glow, flame tongues and lightning."""
+    """Cinematic golden energy aura with a hot silhouette rim, rising flames and lightning."""
     h, w = frame.shape[:2]
     binary = (mask > 0.24).astype(np.uint8)
     ys, xs = np.where(binary > 0)
     if len(xs) < 30:
         return frame
 
-    x0, x1 = max(0, int(xs.min()) - 42), min(w - 1, int(xs.max()) + 42)
-    y0, y1 = max(0, int(ys.min()) - 48), min(h - 1, int(ys.max()) + 12)
+    x0, x1 = max(0, int(xs.min()) - 58), min(w - 1, int(xs.max()) + 58)
+    y0, y1 = max(0, int(ys.min()) - 62), min(h - 1, int(ys.max()) + 18)
     roi_mask = binary[y0:y1 + 1, x0:x1 + 1]
-    rh, rw = roi_mask.shape
-    pulse = 0.78 + 0.16 * np.sin(now * 8.5) + 0.06 * np.sin(now * 17.0)
+    pulse = 0.82 + 0.12 * np.sin(now * 7.0) + 0.06 * np.sin(now * 15.0)
 
-    # Build several expanding rings around the segmented silhouette.
-    k1 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
-    k2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
-    k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (57, 57))
-    ring1 = cv2.subtract(cv2.dilate(roi_mask, k1), roi_mask)
-    ring2 = cv2.subtract(cv2.dilate(roi_mask, k2), cv2.dilate(roi_mask, k1))
-    ring3 = cv2.subtract(cv2.dilate(roi_mask, k3), cv2.dilate(roi_mask, k2))
+    # Three soft energy shells: deep amber outside, saturated gold, then hot yellow.
+    k_outer = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (61, 61))
+    k_middle = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (37, 37))
+    k_inner = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (17, 17))
+    d_outer = cv2.dilate(roi_mask, k_outer)
+    d_middle = cv2.dilate(roi_mask, k_middle)
+    d_inner = cv2.dilate(roi_mask, k_inner)
+    shell_outer = cv2.subtract(d_outer, d_middle).astype(np.float32)
+    shell_middle = cv2.subtract(d_middle, d_inner).astype(np.float32)
+    shell_inner = cv2.subtract(d_inner, roi_mask).astype(np.float32)
 
-    # Wide amber halo, bright golden middle and near-white hot edge.
-    aura_small = cv2.GaussianBlur(ring1.astype(np.float32), (0, 0), 4)
-    aura_mid = cv2.GaussianBlur(ring2.astype(np.float32), (0, 0), 7)
-    aura_wide = cv2.GaussianBlur(ring3.astype(np.float32), (0, 0), 11)
+    glow_outer = cv2.GaussianBlur(shell_outer, (0, 0), 15)
+    glow_middle = cv2.GaussianBlur(shell_middle, (0, 0), 8)
+    glow_inner = cv2.GaussianBlur(shell_inner, (0, 0), 3)
     out = frame.copy()
     patch = out[y0:y1 + 1, x0:x1 + 1].astype(np.float32)
-    halo = np.zeros_like(patch)
-    halo[:] = (0, 150, 255)       # amber
-    mid = np.zeros_like(patch)
-    mid[:] = (0, 215, 255)        # golden yellow
-    hot = np.zeros_like(patch)
-    hot[:] = (80, 245, 255)        # hot yellow-white
-    a3 = (aura_wide * (0.42 * pulse))[:, :, None]
-    a2 = (aura_mid * (0.58 * pulse))[:, :, None]
-    a1 = (aura_small * (0.74 * pulse))[:, :, None]
-    patch = patch * (1.0 - a3) + halo * a3
-    patch = patch * (1.0 - a2) + mid * a2
-    patch = patch * (1.0 - a1) + hot * a1
+
+    amber = np.zeros_like(patch); amber[:] = (0, 92, 255)
+    gold = np.zeros_like(patch); gold[:] = (0, 178, 255)
+    yellow = np.zeros_like(patch); yellow[:] = (12, 238, 255)
+    for glow, tint, strength in (
+        (glow_outer, amber, 0.34 * pulse),
+        (glow_middle, gold, 0.48 * pulse),
+        (glow_inner, yellow, 0.72 * pulse),
+    ):
+        alpha = np.clip(glow * strength, 0.0, 0.78)[:, :, None]
+        patch = patch * (1.0 - alpha) + tint * alpha
     out[y0:y1 + 1, x0:x1 + 1] = np.clip(patch, 0, 255).astype(np.uint8)
 
-    # Flickering flame tongues rise from both sides and above the body.
-    flame_layer = out.copy()
-    contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # Bright, narrow contour edge makes the energy cling to the subject.
+    edge = cv2.subtract(cv2.dilate(roi_mask, np.ones((3, 3), np.uint8)), roi_mask)
+    edge_layer = out.copy()
+    edge_global = np.zeros((h, w), dtype=np.uint8)
+    edge_global[y0:y1 + 1, x0:x1 + 1] = edge * 255
+    edge_global = cv2.dilate(edge_global, np.ones((3, 3), np.uint8), iterations=1)
+    out[edge_global > 0] = (35, 235, 255)
+
+    # Draw animated flame tongues rising from both sides of the silhouette.
+    flame = np.zeros_like(out)
+    contours, _ = cv2.findContours(roi_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if contours:
         contour = max(contours, key=cv2.contourArea).reshape(-1, 2)
-        left_edge = contour[np.argsort(contour[:, 0])[:max(1, len(contour) // 5)]]
-        right_edge = contour[np.argsort(contour[:, 0])[-max(1, len(contour) // 5):]]
-        for side, edge_points in ((-1, left_edge), (1, right_edge)):
-            if len(edge_points) == 0:
-                continue
-            for i in range(8):
-                p = edge_points[(i * max(1, len(edge_points) // 8) + int(now * 13) % len(edge_points)) % len(edge_points)]
-                px, py = int(p[0]) + x0, int(p[1]) + y0
-                height = 18 + int((0.5 + 0.5 * np.sin(now * 11 + i * 2.1)) * 34)
-                sway = int(np.sin(now * 9 + i * 1.8) * 10)
-                base_x = px + side * (5 + (i % 3) * 3)
-                tip_x = base_x + sway + side * int(height * 0.18)
-                tip_y = max(0, py - height)
-                mid_x = (base_x + tip_x) // 2 + side * 5
-                mid_y = (py + tip_y) // 2
-                cv2.polylines(flame_layer, [np.array([
-                    [base_x, py], [mid_x, mid_y], [tip_x, tip_y]
-                ], dtype=np.int32)], False, (0, 190, 255), 3, cv2.LINE_AA)
-                cv2.line(flame_layer, (mid_x, mid_y), (tip_x, tip_y),
-                         (90, 255, 255), 1, cv2.LINE_AA)
+        # Sample the outer left and right contour; avoid drawing over the face/body.
+        left = contour[np.argsort(contour[:, 0])[:max(1, len(contour) // 4)]]
+        right = contour[np.argsort(contour[:, 0])[-max(1, len(contour) // 4):]]
+        for side, points in ((-1, left), (1, right)):
+            for i in range(11):
+                p = points[(i * 17 + int(now * 19)) % len(points)]
+                bx, by = int(p[0]) + x0, int(p[1]) + y0
+                height = 24 + int((0.5 + 0.5 * np.sin(now * 9.0 + i * 1.9)) * 52)
+                sway = int(np.sin(now * 6.5 + i * 2.2) * 13)
+                base_x = bx + side * 5
+                tip_x = base_x + sway + side * (height // 5)
+                tip_y = max(0, by - height)
+                mid_x = (base_x + tip_x) // 2 + side * 7
+                mid_y = (by + tip_y) // 2
+                pts = np.array([[base_x, by], [mid_x, mid_y], [tip_x, tip_y]], dtype=np.int32)
+                cv2.polylines(flame, [pts], False, (0, 118, 255), 5, cv2.LINE_AA)
+                cv2.polylines(flame, [pts], False, (0, 220, 255), 2, cv2.LINE_AA)
+                cv2.line(flame, (mid_x, mid_y), (tip_x, tip_y),
+                         (105, 255, 255), 1, cv2.LINE_AA)
 
-    # Tall flame spikes above the head, animated independently.
-    head_x = int((x0 + x1) * 0.5)
-    head_y = max(4, int(ys.min()) + 5)
-    for i in range(7):
-        base_x = head_x + int((i - 3) * 11)
-        height = 22 + int((0.5 + 0.5 * np.sin(now * 12 + i * 1.7)) * 42)
-        lean = int(np.sin(now * 8 + i) * 9)
-        cv2.polylines(flame_layer, [np.array([
-            [base_x - 4, head_y + 18],
+    # A crown of long, flickering flames above the head.
+    head_x = int((int(xs.min()) + int(xs.max())) * 0.5)
+    head_y = max(5, int(ys.min()) + 4)
+    for i in range(9):
+        base_x = head_x + (i - 4) * 10
+        height = 28 + int((0.5 + 0.5 * np.sin(now * 10.5 + i * 1.45)) * 55)
+        lean = int(np.sin(now * 7.0 + i * 1.3) * 10)
+        pts = np.array([
+            [base_x - 5, head_y + 15],
             [base_x + lean, head_y - height // 2],
             [base_x + lean * 2, max(0, head_y - height)]
-        ], dtype=np.int32)], False, (0, 205, 255), 3, cv2.LINE_AA)
+        ], dtype=np.int32)
+        cv2.polylines(flame, [pts], False, (0, 105, 255), 6, cv2.LINE_AA)
+        cv2.polylines(flame, [pts], False, (0, 220, 255), 2, cv2.LINE_AA)
 
-    out = cv2.addWeighted(out, 1.0, flame_layer, 0.72 * pulse, 0)
+    # Soften the flame strokes into a luminous fire edge, then layer the sharp core back on.
+    flame_glow = cv2.GaussianBlur(flame, (0, 0), 5)
+    out = cv2.addWeighted(out, 1.0, flame_glow, 0.72 * pulse, 0)
+    out = cv2.addWeighted(out, 1.0, flame, 0.72 * pulse, 0)
 
-    # Fast jagged electric bolts around the aura, not a static oval ring.
-    lightning = out.copy()
-    for i in range(5):
+    # Jagged electric arcs and drifting sparks around the outer aura.
+    energy = np.zeros_like(out)
+    for i in range(7):
         side = -1 if i % 2 == 0 else 1
-        anchor_x = x0 - 12 if side < 0 else x1 + 12
-        anchor_y = y0 + int((i + 1) * (y1 - y0) / 6)
-        phase = now * 10 + i * 2.4
-        points = [[anchor_x, anchor_y]]
-        x, y = anchor_x, anchor_y
-        for j in range(4):
-            x += side * int(5 + 5 * abs(np.sin(phase + j)))
-            y -= 7 + int(5 * abs(np.cos(phase + j * 1.3)))
-            points.append([max(0, min(w - 1, x)), max(0, min(h - 1, y))])
-        cv2.polylines(lightning, [np.array(points, dtype=np.int32)], False,
-                      (0, 225, 255), 2, cv2.LINE_AA)
-        cv2.polylines(lightning, [np.array(points, dtype=np.int32)], False,
-                      (150, 255, 255), 1, cv2.LINE_AA)
+        ax = max(0, min(w - 1, x0 - 8 if side < 0 else x1 + 8))
+        ay = y0 + int((i + 1) * max(1, y1 - y0) / 8)
+        phase = now * 11.0 + i * 2.1
+        points = [[ax, ay]]
+        px, py = ax, ay
+        for j in range(5):
+            px += side * int(4 + 7 * abs(np.sin(phase + j * 1.2)))
+            py -= 6 + int(6 * abs(np.cos(phase + j)))
+            points.append([max(0, min(w - 1, px)), max(0, min(h - 1, py))])
+        poly = np.array(points, dtype=np.int32)
+        cv2.polylines(energy, [poly], False, (0, 175, 255), 3, cv2.LINE_AA)
+        cv2.polylines(energy, [poly], False, (105, 255, 255), 1, cv2.LINE_AA)
 
-    # Small hot sparks drift upward in the aura margin.
-    for i in range(18):
-        sx = x0 + ((i * 23 + int(now * (34 + i % 5))) % max(1, x1 - x0 + 1))
-        sy = y0 + ((i * 41 - int(now * (28 + i % 7))) % max(1, y1 - y0 + 1))
+    for i in range(22):
+        sx = x0 + ((i * 29 + int(now * (25 + i % 6))) % max(1, x1 - x0 + 1))
+        sy = y0 + ((i * 47 - int(now * (34 + i % 5))) % max(1, y1 - y0 + 1))
         if binary[sy, sx] == 0:
-            radius = 1 + (i % 2)
-            cv2.circle(lightning, (sx, sy), radius, (40, 240, 255), -1, cv2.LINE_AA)
+            r = 1 + (i % 2)
+            cv2.circle(energy, (sx, sy), r, (0, 220, 255), -1, cv2.LINE_AA)
+            if i % 4 == 0:
+                cv2.line(energy, (sx, sy + 5), (sx, sy - 5), (0, 185, 255), 1, cv2.LINE_AA)
 
-    out = cv2.addWeighted(out, 1.0, lightning, 0.82 * pulse, 0)
+    energy_glow = cv2.GaussianBlur(energy, (0, 0), 3)
+    out = cv2.addWeighted(out, 1.0, energy_glow, 0.62 * pulse, 0)
+    out = cv2.addWeighted(out, 1.0, energy, 0.82 * pulse, 0)
     return out
 
 def instant_transmission(output, source_frame, mask, phase, direction):
@@ -428,8 +442,9 @@ def main():
     cached_face = None
     last_gesture = False
     cross_started_at = None
+    cross_release_started = None
     transform_cooldown_until = 0.0
-    cross_latched = False
+    cross_ready = True
     aura_active = False
 
     print("\\nGOKU INSTANT CAM")
@@ -482,20 +497,24 @@ def main():
             now = time.time()
             gesture = forehead_gesture(cached_hands, cached_face)
             hands_crossed, cross_debug = crossed_hands_gesture(cached_hands, cached_face)
-            # A short hold filters accidental one-frame hand-tracking glitches.
-            if hands_crossed and now >= transform_cooldown_until:
-                if cross_started_at is None:
-                    cross_started_at = now
-                elif now - cross_started_at >= 0.28 and not cross_latched:
-                    aura_active = not aura_active
-                    cross_latched = True
-                    transform_cooldown_until = now + 0.85
-                    print("SUPER SAIYAN TRANSFORMATION!" if aura_active else "AURA DEACTIVATED")
+            # Toggle once per deliberate cross. Re-arm only after hands stay uncrossed.
+            if hands_crossed:
+                cross_release_started = None
+                if cross_ready and now >= transform_cooldown_until:
+                    if cross_started_at is None:
+                        cross_started_at = now
+                    elif now - cross_started_at >= 0.32:
+                        aura_active = not aura_active
+                        cross_ready = False
+                        cross_started_at = None
+                        transform_cooldown_until = now + 0.55
+                        print("SUPER SAIYAN TRANSFORMATION!" if aura_active else "AURA DEACTIVATED")
             else:
                 cross_started_at = None
-                # Must uncross hands before another cross can toggle the aura.
-                if not hands_crossed:
-                    cross_latched = False
+                if cross_release_started is None:
+                    cross_release_started = now
+                elif now - cross_release_started >= 0.40:
+                    cross_ready = True
             if gesture and now >= cooldown_until and transition_started is None:
                 if gesture_started is None:
                     gesture_started = now
@@ -559,12 +578,18 @@ def main():
             if background is None:
                 message = "STEP OUT OF FRAME TO CAPTURE BACKGROUND"
                 color = (0, 210, 255)
+            elif hands_crossed and not cross_ready:
+                message = "CROSS REGISTERED - RELEASE HANDS TO REARM"
+                color = (40, 225, 255)
             elif hands_crossed:
-                message = "CROSS DETECTED - SUPER SAIYAN!"
+                message = "HOLD THE CROSS TO TRANSFORM"
                 color = (40, 225, 255)
             elif "SHOW BOTH HANDS" in cross_debug:
                 message = "SHOW BOTH HANDS TO TRANSFORM"
                 color = (180, 220, 255)
+            elif aura_active:
+                message = "SUPER SAIYAN AURA ACTIVE - CROSS TO DEACTIVATE"
+                color = (40, 225, 255)
             elif aura_active:
                 message = "SUPER SAIYAN AURA ACTIVE"
                 color = (40, 225, 255)
