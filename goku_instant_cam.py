@@ -61,7 +61,7 @@ def instant_transmission(output, source_frame, mask, phase, direction):
     """
     Lightweight Goku-inspired Instant Transmission stack:
     vertical energy streaks, localized wave/noise displacement,
-    flicker/dissolve silhouette and a short vertical directional blur.
+    flicker/dissolve silhouette, vertical blur, shockwave, electric sparks, afterimage echoes and RGB glitch.
     """
     if phase >= 0.62:
         return output
@@ -137,6 +137,82 @@ def instant_transmission(output, source_frame, mask, phase, direction):
         edge_alpha = (edge.astype(np.float32) * (0.70 * strength))[:, :, None]
         out = np.clip(out.astype(np.float32) * (1.0 - edge_alpha) +
                       cool.astype(np.float32) * edge_alpha, 0, 255).astype(np.uint8)
+
+        # 4) Expanding shockwave ring around the subject's center.
+        wave_strength = max(0.0, 1.0 - abs(phase - 0.25) / 0.22)
+        if wave_strength > 0:
+            center = (int((x0 + x1) * 0.5), int((y0 + y1) * 0.52))
+            max_radius = int(max(x1 - x0, y1 - y0) * 0.72)
+            radius = max(2, int(max_radius * min(1.0, phase / 0.42)))
+            wave_layer = out.copy()
+            cv2.circle(wave_layer, center, radius, (255, 245, 220),
+                       max(1, int(2 * wave_strength)), cv2.LINE_AA)
+            cv2.circle(wave_layer, center, max(1, radius - 5),
+                       max(1, int(1 * wave_strength)), (255, 190, 120), 1, cv2.LINE_AA)
+            out = cv2.addWeighted(out, 1.0, wave_layer,
+                                  0.48 * wave_strength, 0)
+
+        # 5) Tiny deterministic electric sparks along the silhouette edges.
+        spark_strength = max(0.0, 1.0 - abs(phase - 0.19) / 0.20)
+        if spark_strength > 0:
+            spark_layer = out.copy()
+            for i in range(9):
+                sx = x0 + ((i * 29 + int(phase * 260)) % max(1, x1 - x0 + 1))
+                sy = y0 + ((i * 47 + int(phase * 170)) % max(1, y1 - y0 + 1))
+                if mask[sy, sx] < 0.18:
+                    length = 5 + (i % 4) * 3
+                    bend = -1 if i % 2 else 1
+                    points = np.array([
+                        [sx, sy],
+                        [sx + bend * 3, sy - length // 2],
+                        [sx - bend * 2, sy - length],
+                    ], dtype=np.int32)
+                    cv2.polylines(spark_layer, [points], False,
+                                  (255, 250, 225), 1, cv2.LINE_AA)
+            out = cv2.addWeighted(out, 1.0, spark_layer,
+                                  0.82 * spark_strength, 0)
+
+        # 6) Two quick displaced afterimage echoes, strongest during vanish.
+        echo_strength = max(0.0, 1.0 - abs(phase - 0.16) / 0.18)
+        if echo_strength > 0:
+            for echo_index, shift in enumerate((7, 14), start=1):
+                dx = int((1 if direction < 0 else -1) * shift)
+                matrix = np.float32([[1, 0, dx], [0, 1, 0]])
+                echo_frame = cv2.warpAffine(
+                    source_frame, matrix, (w, h), flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT
+                )
+                echo_mask = cv2.warpAffine(
+                    mask, matrix, (w, h), flags=cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT
+                )
+                echo_tint = echo_frame.copy()
+                echo_tint[:, :, 0] = np.clip(
+                    echo_tint[:, :, 0].astype(np.float32) * 1.12 + 18, 0, 255
+                ).astype(np.uint8)
+                echo_alpha = (echo_mask * (0.17 * echo_strength / echo_index))[:, :, None]
+                out = np.clip(out.astype(np.float32) * (1.0 - echo_alpha) +
+                              echo_tint.astype(np.float32) * echo_alpha,
+                              0, 255).astype(np.uint8)
+
+        # 7) Brief RGB channel split for a spatial-glitch accent.
+        glitch_strength = max(0.0, 1.0 - abs(phase - 0.23) / 0.12)
+        if glitch_strength > 0:
+            roi = out[y0:y1 + 1, x0:x1 + 1]
+            shift = max(1, int(4 * glitch_strength))
+            blue_shift = np.roll(roi[:, :, 0], shift, axis=1)
+            red_shift = np.roll(roi[:, :, 2], -shift, axis=1)
+            glitch_roi = roi.copy()
+            glitch_roi[:, :, 0] = blue_shift
+            glitch_roi[:, :, 2] = red_shift
+            glitch_mask = cv2.GaussianBlur(mask[y0:y1 + 1, x0:x1 + 1],
+                                           (0, 0), 6)
+            glitch_alpha = (glitch_mask * (0.42 * glitch_strength))[:, :, None]
+            out[y0:y1 + 1, x0:x1 + 1] = np.clip(
+                roi.astype(np.float32) * (1.0 - glitch_alpha) +
+                glitch_roi.astype(np.float32) * glitch_alpha,
+                0, 255
+            ).astype(np.uint8)
 
     return out
 
